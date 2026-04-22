@@ -1,0 +1,77 @@
+trigger: none
+
+pool:
+  name: 'SelfHostedPool'
+
+variables:
+  vmPublicIp: '4.221.182.189'
+  db_host: 'epicbook-prod-mysql-t9tlbv.mysql.database.azure.com'
+
+steps:
+  - checkout: self
+    displayName: 'Checkout repository'
+
+  - task: DownloadSecureFile@1
+    name: sshPrivateKey
+    displayName: 'Download SSH private key'
+    inputs:
+      secureFile: 'id_rsa'
+
+  - script: |
+      sudo apt-get update
+      sudo apt-get install -y ansible sshpass
+      ansible --version
+    displayName: 'Install Ansible'
+
+  - script: |
+      mkdir -p ~/.ssh
+      cp "$(sshPrivateKey.secureFilePath)" ~/.ssh/id_rsa
+      chmod 600 ~/.ssh/id_rsa
+      ls -l ~/.ssh
+    displayName: 'Prepare SSH private key'
+
+  - script: |
+      cat > inventory.ini <<EOF
+      [web]
+      $(vmPublicIp)
+
+      [web:vars]
+      ansible_user=azureuser
+      ansible_connection=ssh
+      ansible_ssh_private_key_file=$HOME/.ssh/id_rsa
+      ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+      ansible_python_interpreter=/usr/bin/python3
+      EOF
+
+      echo "Generated inventory:"
+      cat inventory.ini
+    displayName: 'Generate inventory.ini'
+
+  - script: |
+      python3 - <<'PY'
+      from pathlib import Path
+      import re
+
+      path = Path("group_vars/web/main.yml")
+      text = path.read_text()
+      text = re.sub(r'^db_host:.*$', 'db_host: "$(db_host)"', text, flags=re.MULTILINE)
+      path.write_text(text)
+
+      print("Updated group_vars/web/main.yml:")
+      print(path.read_text())
+      PY
+    displayName: 'Update db_host in group_vars'
+
+  - script: |
+      ansible all -m ping
+    displayName: 'Test Ansible connectivity'
+
+  - script: |
+      ansible-playbook site.yml
+    displayName: 'Run Ansible playbook'
+
+  - script: |
+      set -e
+      curl -I --max-time 20 http://$(vmPublicIp)
+      curl --max-time 20 http://$(vmPublicIp) | head
+    displayName: 'Verify deployment through Nginx'
