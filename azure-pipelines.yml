@@ -1,15 +1,39 @@
 trigger: none
 
-pool:
-  name: 'SelfHostedPool'
+resources:
+  pipelines:
+    - pipeline: infra
+      source: infra-epicbook.git
+      trigger: true
 
 variables:
-  vmPublicIp: '4.221.182.189'
-  db_host: 'epicbook-prod-mysql-t9tlbv.mysql.database.azure.com'
+  - group: epicbook-secrets
+
+pool:
+  name: 'SelfHostedPool'
 
 steps:
   - checkout: self
     displayName: 'Checkout repository'
+
+  - download: infra
+    artifact: infra-outputs
+    displayName: 'Download infra outputs artifact'
+
+  - script: |
+      set -e
+
+      echo "Downloaded artifact contents:"
+      ls -R "$(Pipeline.Workspace)"
+
+      source "$(Pipeline.Workspace)/infra/infra-outputs/infra-outputs.env"
+
+      echo "##vso[task.setvariable variable=vmPublicIp]$vmPublicIp"
+      echo "##vso[task.setvariable variable=db_host]$db_host"
+
+      echo "VM IP: $vmPublicIp"
+      echo "DB Host: $db_host"
+    displayName: 'Load infra outputs'
 
   - task: DownloadSecureFile@1
     name: sshPrivateKey
@@ -20,7 +44,6 @@ steps:
   - script: |
       sudo apt-get update
       sudo apt-get install -y ansible sshpass
-      ansible --version
     displayName: 'Install Ansible'
 
   - script: |
@@ -48,30 +71,20 @@ steps:
     displayName: 'Generate inventory.ini'
 
   - script: |
-      python3 - <<'PY'
-      from pathlib import Path
-      import re
-
-      path = Path("group_vars/web/main.yml")
-      text = path.read_text()
-      text = re.sub(r'^db_host:.*$', 'db_host: "$(db_host)"', text, flags=re.MULTILINE)
-      path.write_text(text)
-
-      print("Updated group_vars/web/main.yml:")
-      print(path.read_text())
-      PY
-    displayName: 'Update db_host in group_vars'
-
-  - script: |
       ansible all -m ping
     displayName: 'Test Ansible connectivity'
 
   - script: |
-      ansible-playbook site.yml
+      ansible-playbook site.yml \
+        -e "db_host=$(db_host)" \
+        -e "db_password=$(db_password)"
     displayName: 'Run Ansible playbook'
 
   - script: |
       set -e
+      echo "========================================="
+      echo "App URL: http://$(vmPublicIp)"
+      echo "========================================="
       curl -I --max-time 20 http://$(vmPublicIp)
       curl --max-time 20 http://$(vmPublicIp) | head
-    displayName: 'Verify deployment through Nginx'
+    displayName: 'Verify deployment Url and Nginx'

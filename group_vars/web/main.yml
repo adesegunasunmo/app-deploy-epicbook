@@ -7,6 +7,4 @@ nginx_site_name: "epicbook"
 app_port: 3000
 db_user: "epicbook_user"
 db_name: "bookstore"
-db_host: "epicbook-prod-mysql-t9tlbv.mysql.database.azure.com"
-db_password: "Demo123456!!"
 pm2_home: "/var/www/.pm2"
